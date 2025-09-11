@@ -3,7 +3,8 @@
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
-    "mongoose": "^8.16.1"
+    "mongoose": "^8.16.1",
+    "slugify": "^1.6.6"
   },
   "scripts": {
     "start": "node server.js",
@@ -12,7 +13,6 @@
   "name": "mica-backend",
   "version": "1.0.0",
   "main": "Server.js",
-  "devDependencies": {},
   "author": "",
   "license": "ISC",
   "description": ""
