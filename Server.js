@@ -435,9 +435,28 @@ app.get("/api/questions/:id", async (req, res) => {
 
 app.put("/api/questions/:id", async (req, res) => {
   try {
+    const { testCategory, ...updateData } = req.body;
+    
+    // If testCategory is provided and it's not already an ObjectId
+    if (testCategory && !mongoose.Types.ObjectId.isValid(testCategory)) {
+      const category = await TestCategory.findOne({ 
+        $or: [
+          { slug: testCategory },
+          { name: testCategory }
+        ]
+      });
+      if (!category) {
+        return res.status(400).json({ error: "Test category not found" });
+      }
+      updateData.testCategory = category._id;
+    } else if (testCategory) {
+      // If it's already an ObjectId, use it directly
+      updateData.testCategory = testCategory;
+    }
+
     const updatedQuestion = await Question.findByIdAndUpdate(
       req.params.id,
-      req.body,
+      updateData,
       { new: true, runValidators: true }
     ).populate('testCategory');
 
