@@ -362,9 +362,27 @@ app.post("/api/questions", async (req, res) => {
 app.get("/api/questions/count", async (req, res) => {
   try {
     const { testCategory } = req.query;
+    console.log("testCategory:", testCategory);
+    
     const match = {};
 
-    if (testCategory) match.testCategory = testCategory;
+    if (testCategory) {
+      // First find the test category by slug to get its ObjectId
+      const category = await TestCategory.findOne({ slug: testCategory });
+      if (category) {
+        match.testCategory = category._id;
+      } else {
+        // If category not found, return empty counts
+        return res.json({
+          totalQuestions: 0,
+          sampleQuestions: 0,
+          liveQuestions: 0,
+          gradeLevels: 0,
+          questionTypes: 0,
+          difficultyLevels: 0
+        });
+      }
+    }
 
     const counts = await Question.aggregate([
       { $match: match },
