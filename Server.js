@@ -534,9 +534,9 @@ app.get("/api/live-test/:grade", async (req, res) => {
 // Results Endpoints
 app.post('/api/results', async (req, res) => {
   try {
-    const { student, answers, timeSpent, submittedAt, analysis, testCategory } = req.body;
+    const { student, answers, timeSpent, submittedAt, analysis } = req.body;
     
-    if (!student || !student.rollNo || !analysis || !testCategory) {
+    if (!student || !student.rollNo || !analysis ) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -550,7 +550,6 @@ app.post('/api/results', async (req, res) => {
     }
     
     const newResult = new StudentResult({
-      testCategory,
       rollNo: student.rollNo,
       name: student.name,
       score: analysis.correctCount,
