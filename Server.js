@@ -149,7 +149,6 @@ const studentResultSchema = new mongoose.Schema({
   rollNo: {
     type: String,
     required: true,
-    unique: true
   },
   name: {
     type: String,
@@ -584,27 +583,31 @@ app.post('/api/results', async (req, res) => {
   }
 });
 
-app.get('/api/results/:rollNo', async (req, res) => {
+app.get('/api/results/:rollNo/:testCategory', async (req, res) => {
   try {
-    const { rollNo } = req.params;
-    const { testCategory } = req.query;
+    const { rollNo, testCategory } = req.params;
+    console.log("rollNo:", rollNo);
+    console.log("testCategory:", testCategory);
     
-    let query = { rollNo };
-    
-    if (testCategory) {
-      const category = await TestCategory.findOne({ 
-        $or: [
-          { slug: testCategory },
-          { _id: testCategory }
-        ] 
-      });
-      
-      if (category) {
-        query.testCategory = category._id;
-      }
+    // If testCategory is not provided, return error
+    if (!testCategory) {
+      return res.status(400).json({ error: 'Test category is required' });
     }
 
-    const existingResult = await StudentResult.findOne(query);
+    // Find the test category - only by slug since testCategory from URL is a slug
+    const category = await TestCategory.findOne({ 
+      slug: testCategory 
+    });
+    
+    if (!category) {
+      return res.status(404).json({ error: 'Test category not found' });
+    }
+
+    // Query with both rollNo AND testCategory
+    const existingResult = await StudentResult.findOne({
+      rollNo: rollNo,
+      testCategory: category._id  // Use the ObjectId
+    });
     
     if (existingResult) {
       res.json({ 
@@ -626,7 +629,6 @@ app.get('/api/results/:rollNo', async (req, res) => {
     res.status(500).json({ error: 'Failed to check student results' });
   }
 });
-
 app.get('/api/results', async (req, res) => {
   try {
     const { testCategory } = req.query;
