@@ -540,13 +540,8 @@ app.post('/api/results', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Find the test category by slug to get its ObjectId
-    const category = await TestCategory.findOne({ 
-      $or: [
-        { slug: testCategory },
-        { _id: testCategory }
-      ] 
-    });
+    // Always search by slug since that's what you're sending from frontend
+    const category = await TestCategory.findOne({ slug: testCategory });
     
     if (!category) {
       return res.status(400).json({ error: 'Test category not found' });
@@ -565,7 +560,7 @@ app.post('/api/results', async (req, res) => {
     }
     
     const newResult = new StudentResult({
-      testCategory: category._id, // Use the ObjectId here
+      testCategory: category._id,
       rollNo: student.rollNo,
       name: student.name,
       score: analysis.correctCount,
@@ -585,7 +580,7 @@ app.post('/api/results', async (req, res) => {
     });
   } catch (error) {
     console.error('Error saving results:', error);
-    res.status(500).json({ error: 'Failed to save results' });
+    res.status(500).json({ error: 'Failed to save results: ' + error.message });
   }
 });
 
