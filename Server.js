@@ -540,7 +540,22 @@ app.post('/api/results', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const existingResult = await StudentResult.findOne({ rollNo: student.rollNo });
+    // Find the test category by slug to get its ObjectId
+    const category = await TestCategory.findOne({ 
+      $or: [
+        { slug: testCategory },
+        { _id: testCategory }
+      ] 
+    });
+    
+    if (!category) {
+      return res.status(400).json({ error: 'Test category not found' });
+    }
+
+    const existingResult = await StudentResult.findOne({ 
+      rollNo: student.rollNo,
+      testCategory: category._id 
+    });
     
     if (existingResult) {
       return res.status(200).json({ 
@@ -550,7 +565,7 @@ app.post('/api/results', async (req, res) => {
     }
     
     const newResult = new StudentResult({
-      testCategory,
+      testCategory: category._id, // Use the ObjectId here
       rollNo: student.rollNo,
       name: student.name,
       score: analysis.correctCount,
@@ -579,8 +594,20 @@ app.get('/api/results/:rollNo', async (req, res) => {
     const { rollNo } = req.params;
     const { testCategory } = req.query;
     
-    const query = { rollNo };
-    if (testCategory) query.testCategory = testCategory;
+    let query = { rollNo };
+    
+    if (testCategory) {
+      const category = await TestCategory.findOne({ 
+        $or: [
+          { slug: testCategory },
+          { _id: testCategory }
+        ] 
+      });
+      
+      if (category) {
+        query.testCategory = category._id;
+      }
+    }
 
     const existingResult = await StudentResult.findOne(query);
     
@@ -608,8 +635,20 @@ app.get('/api/results/:rollNo', async (req, res) => {
 app.get('/api/results', async (req, res) => {
   try {
     const { testCategory } = req.query;
-    const query = {};
-    if (testCategory) query.testCategory = testCategory;
+    let query = {};
+    
+    if (testCategory) {
+      const category = await TestCategory.findOne({ 
+        $or: [
+          { slug: testCategory },
+          { _id: testCategory }
+        ] 
+      });
+      
+      if (category) {
+        query.testCategory = category._id;
+      }
+    }
 
     const results = await StudentResult.find(query).sort({ createdAt: -1 });
     res.json(results);
@@ -618,7 +657,6 @@ app.get('/api/results', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch results' });
   }
 });
-
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ 
