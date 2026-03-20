@@ -186,6 +186,36 @@ const studentResultSchema = new mongoose.Schema({
 
 const StudentResult = mongoose.model('StudentResult', studentResultSchema);
 
+// Test Timer Schema
+const testTimerSchema = new mongoose.Schema({
+  testCategory: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "TestCategory",
+    required: true,
+    unique: true
+  },
+  sampleTestDuration: {
+    type: Number,
+    required: true,
+    description: "Duration in minutes for sample test"
+  },
+  liveTestDuration: {
+    type: Number,
+    required: true,
+    description: "Duration in minutes for live test"
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+const TestTimer = mongoose.model('TestTimer', testTimerSchema);
+
 // Helper function to generate slug
 const generateSlug = (name) => {
   return slugify(name, {
@@ -244,6 +274,136 @@ app.get('/api/test-categories/:slug', async (req, res) => {
       return res.status(404).json({ error: 'Test category not found' });
     }
     res.json(category);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Test Timer Routes
+app.post('/api/test-timer', async (req, res) => {
+  try {
+    const { testCategory, sampleTestDuration, liveTestDuration } = req.body;
+    
+    if (!testCategory || sampleTestDuration === undefined || liveTestDuration === undefined) {
+      return res.status(400).json({ 
+        error: 'Missing required fields (testCategory, sampleTestDuration, liveTestDuration)' 
+      });
+    }
+
+    // Find the test category - try slug first, then ID if valid
+    let category = await TestCategory.findOne({ slug: testCategory });
+    
+    if (!category && mongoose.Types.ObjectId.isValid(testCategory)) {
+      category = await TestCategory.findById(testCategory);
+    }
+    
+    if (!category) {
+      return res.status(400).json({ error: 'Test category not found' });
+    }
+
+    // Validate durations are positive numbers
+    if (sampleTestDuration <= 0 || liveTestDuration <= 0) {
+      return res.status(400).json({ 
+        error: 'Duration must be greater than 0 minutes' 
+      });
+    }
+
+    // Check if timer already exists for this category
+    let timer = await TestTimer.findOne({ testCategory: category._id });
+    
+    if (timer) {
+      // Update existing timer
+      timer.sampleTestDuration = sampleTestDuration;
+      timer.liveTestDuration = liveTestDuration;
+      timer.updatedAt = new Date();
+      await timer.save();
+    } else {
+      // Create new timer
+      timer = new TestTimer({
+        testCategory: category._id,
+        sampleTestDuration,
+        liveTestDuration
+      });
+      await timer.save();
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Timer configuration saved successfully',
+      data: {
+        testCategory: category.name,
+        testCategorySlug: category.slug,
+        sampleTestDuration: timer.sampleTestDuration,
+        liveTestDuration: timer.liveTestDuration,
+        updatedAt: timer.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Error saving timer:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/test-timer/:testCategory', async (req, res) => {
+  try {
+    const { testCategory } = req.params;
+    
+    // First try to find by slug (most common case)
+    let category = await TestCategory.findOne({ slug: testCategory });
+    
+    // If not found by slug and the parameter looks like a valid ObjectId, try by ID
+    if (!category && mongoose.Types.ObjectId.isValid(testCategory)) {
+      category = await TestCategory.findById(testCategory);
+    }
+    
+    if (!category) {
+      return res.status(404).json({ error: 'Test category not found' });
+    }
+
+    // Find timer for this category
+    const timer = await TestTimer.findOne({ testCategory: category._id });
+    
+    if (!timer) {
+      // Return default durations if no timer configured
+      return res.json({
+        testCategory: category.name,
+        testCategorySlug: category.slug,
+        sampleTestDuration: 30, // Default 30 minutes for sample test
+        liveTestDuration: 60,    // Default 60 minutes for live test
+        isDefault: true,
+        message: 'Using default timer settings'
+      });
+    }
+
+    res.json({
+      testCategory: category.name,
+      testCategorySlug: category.slug,
+      sampleTestDuration: timer.sampleTestDuration,
+      liveTestDuration: timer.liveTestDuration,
+      updatedAt: timer.updatedAt,
+      isDefault: false
+    });
+  } catch (error) {
+    console.error('Error fetching timer:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/test-timers', async (req, res) => {
+  try {
+    const timers = await TestTimer.find()
+      .populate('testCategory', 'name slug')
+      .sort({ createdAt: -1 });
+    
+    const formattedTimers = timers.map(timer => ({
+      testCategory: timer.testCategory.name,
+      testCategorySlug: timer.testCategory.slug,
+      sampleTestDuration: timer.sampleTestDuration,
+      liveTestDuration: timer.liveTestDuration,
+      updatedAt: timer.updatedAt
+    }));
+
+    res.json(formattedTimers);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
