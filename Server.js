@@ -794,24 +794,56 @@ app.get('/api/results', async (req, res) => {
     const { testCategory } = req.query;
     let query = {};
     
+    console.log('Fetching results with testCategory:', testCategory);
+    
     if (testCategory) {
-      const category = await TestCategory.findOne({ 
-        $or: [
-          { slug: testCategory },
-          { _id: testCategory }
-        ] 
-      });
+      // Try to find category by slug first, then by ID
+      let category = null;
+      
+      // Check if testCategory is a valid ObjectId string
+      const isValidObjectId = mongoose.Types.ObjectId.isValid(testCategory);
+      
+      if (isValidObjectId) {
+        // Try to find by ID first if it looks like an ObjectId
+        category = await TestCategory.findById(testCategory);
+      }
+      
+      // If not found by ID, try by slug
+      if (!category) {
+        category = await TestCategory.findOne({ slug: testCategory });
+      }
+      
+      console.log('Found category:', category ? { id: category._id, name: category.name, slug: category.slug } : 'Not found');
       
       if (category) {
         query.testCategory = category._id;
+        console.log('Filtering by category ID:', category._id);
+      } else {
+        // Category not found - return empty array instead of error
+        console.log('No category found for:', testCategory);
+        return res.json([]);
       }
     }
-
-    const results = await StudentResult.find(query).sort({ createdAt: -1 });
+    
+    console.log('Final query:', JSON.stringify(query));
+    
+    // Execute the query with proper error handling
+    const results = await StudentResult.find(query)
+      .populate('testCategory', 'name slug') // Populate category details
+      .sort({ createdAt: -1 })
+      .lean(); // Use lean() for better performance
+    
+    console.log(`Found ${results.length} results`);
+    
     res.json(results);
   } catch (error) {
     console.error('Error fetching results:', error);
-    res.status(500).json({ error: 'Failed to fetch results' });
+    // Send detailed error for debugging (remove in production)
+    res.status(500).json({ 
+      error: 'Failed to fetch results',
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 // Health check endpoint
