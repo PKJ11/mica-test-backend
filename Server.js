@@ -17,241 +17,104 @@ mongoose.connect(MONGODB_URI)
 .then(() => console.log('Connected to MongoDB'))
 .catch(err => console.error('MongoDB connection error:', err));
 
-// Test Category Schema
+// ─── Schemas ────────────────────────────────────────────────────────────────
+
 const testCategorySchema = new mongoose.Schema({
-  name: {
-    type: String,
-    required: true,
-    unique: true,
-    trim: true
-  },
-  slug: {
-    type: String,
-    required: true,
-    unique: true,
-    lowercase: true
-  },
-  description: {
-    type: String,
-    default: ""
-  },
-  createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: false
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
+  name: { type: String, required: true, unique: true, trim: true },
+  slug: { type: String, required: true, unique: true, lowercase: true },
+  description: { type: String, default: "" },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: false },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
 });
 
 const TestCategory = mongoose.model('TestCategory', testCategorySchema);
 
-// Question Schema
 const questionSchema = new mongoose.Schema({
-  testCategory: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "TestCategory",
-    required: true
-  },
-  testType: {
-    type: String,
-    enum: ["sample", "live"],
-    default: "sample",
-    required: true,
-  },
+  testCategory: { type: mongoose.Schema.Types.ObjectId, ref: "TestCategory", required: true },
+  testType: { type: String, enum: ["sample", "live"], default: "sample", required: true },
   grade: {
     type: String,
     required: true,
-    enum: [
-      "Grade4",
-      "Grade5",
-      "Grade6",
-      "Grade7",
-      "Grade8",
-      "Grade9",
-      "Grade10",
-      "default",
-    ],
+    enum: ["Grade4","Grade5","Grade6","Grade7","Grade8","Grade9","Grade10","default"],
   },
   type: {
     type: String,
     required: true,
     enum: ["multiple-choice", "short-answer", "drag-and-drop", "match-pairs"],
   },
-  question: {
-    type: String,
-    required: true,
-  },
-  image: {
-    type: String,
-  },
+  question: { type: String, required: true },
+  image: { type: String },
+  // ── Per-question marks (default = 1) ──────────────────────────────────────
+  marks: { type: Number, default: 1, min: 0 },
+  // ─────────────────────────────────────────────────────────────────────────
   options: {
     type: [mongoose.Schema.Types.Mixed],
-    required: function () {
-      return this.type === "multiple-choice" || this.type === "drag-and-drop";
-    },
+    required: function () { return this.type === "multiple-choice"; },
   },
   items: {
     type: [String],
-    required: function () {
-      return this.type === "drag-and-drop";
-    },
+    required: function () { return this.type === "drag-and-drop"; },
   },
   correctOrder: {
     type: [String],
-    required: function () {
-      return this.type === "drag-and-drop";
-    },
+    required: function () { return this.type === "drag-and-drop"; },
   },
   correctAnswer: mongoose.Schema.Types.Mixed,
-  pairs: [
-    {
-      id: String,
-      left: String,
-      right: String,
-    },
-  ],
-  difficulty: {
-    type: String,
-    enum: ["easy", "medium", "hard"],
-    default: "medium",
-  },
+  pairs: [{ id: String, left: String, right: String }],
+  difficulty: { type: String, enum: ["easy", "medium", "hard"], default: "medium" },
   tags: [String],
-  createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now,
-  },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
 });
 
 const Question = mongoose.model("Question", questionSchema);
 
-// Student Result Schema
 const studentResultSchema = new mongoose.Schema({
-  testCategory: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "TestCategory",
-    required: true
-  },
-  rollNo: {
-    type: String,
-    required: true,
-  },
-  name: {
-    type: String,
-    required: true
-  },
-  score: {
-    type: Number,
-    required: true
-  },
-  grade: {
-    type: String,
-    required: true
-  },
-  percentage: {
-    type: Number,
-    required: false
-  },
-  answers: {
-    type: Array,
-    required: true
-  },
-  timeSpent: {
-    type: Number,
-    required: true
-  },
-  submittedAt: {
-    type: Date,
-    required: false
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
+  testCategory: { type: mongoose.Schema.Types.ObjectId, ref: "TestCategory", required: true },
+  rollNo: { type: String, required: true },
+  name: { type: String, required: true },
+  score: { type: Number, required: true },         // weighted marks earned
+  totalMarks: { type: Number, required: false },   // total possible marks
+  grade: { type: String, required: true },
+  percentage: { type: Number, required: false },
+  answers: { type: Array, required: true },
+  timeSpent: { type: Number, required: true },
+  submittedAt: { type: Date, required: false },
+  createdAt: { type: Date, default: Date.now }
 });
 
 const StudentResult = mongoose.model('StudentResult', studentResultSchema);
 
-// Test Timer Schema
 const testTimerSchema = new mongoose.Schema({
-  testCategory: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "TestCategory",
-    required: true,
-    unique: true
-  },
-  sampleTestDuration: {
-    type: Number,
-    required: true,
-    description: "Duration in minutes for sample test"
-  },
-  liveTestDuration: {
-    type: Number,
-    required: true,
-    description: "Duration in minutes for live test"
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
+  testCategory: { type: mongoose.Schema.Types.ObjectId, ref: "TestCategory", required: true, unique: true },
+  sampleTestDuration: { type: Number, required: true },
+  liveTestDuration: { type: Number, required: true },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
 });
 
 const TestTimer = mongoose.model('TestTimer', testTimerSchema);
 
-// Helper function to generate slug
-const generateSlug = (name) => {
-  return slugify(name, {
-    lower: true,
-    strict: true,
-    remove: /[*+~.()'"!:@]/g
-  });
-};
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// Test Category Routes
+const generateSlug = (name) =>
+  slugify(name, { lower: true, strict: true, remove: /[*+~.()'"!:@]/g });
+
+// ─── Test Category Routes ─────────────────────────────────────────────────────
+
 app.post('/api/test-categories', async (req, res) => {
   try {
     const { name, description } = req.body;
-    
-    if (!name) {
-      return res.status(400).json({ error: 'Name is required' });
-    }
+    if (!name) return res.status(400).json({ error: 'Name is required' });
 
     const slug = generateSlug(name);
-    
-    const existingCategory = await TestCategory.findOne({ 
-      $or: [{ name }, { slug }] 
-    });
-    
-    if (existingCategory) {
-      return res.status(400).json({ error: 'Test category already exists' });
-    }
+    const existing = await TestCategory.findOne({ $or: [{ name }, { slug }] });
+    if (existing) return res.status(400).json({ error: 'Test category already exists' });
 
-    const newCategory = new TestCategory({
-      name,
-      slug,
-      description
-    });
-
+    const newCategory = new TestCategory({ name, slug, description });
     await newCategory.save();
-
     res.status(201).json(newCategory);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -270,60 +133,37 @@ app.get('/api/test-categories', async (req, res) => {
 app.get('/api/test-categories/:slug', async (req, res) => {
   try {
     const category = await TestCategory.findOne({ slug: req.params.slug });
-    if (!category) {
-      return res.status(404).json({ error: 'Test category not found' });
-    }
+    if (!category) return res.status(404).json({ error: 'Test category not found' });
     res.json(category);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Test Timer Routes
+// ─── Test Timer Routes ────────────────────────────────────────────────────────
+
 app.post('/api/test-timer', async (req, res) => {
   try {
     const { testCategory, sampleTestDuration, liveTestDuration } = req.body;
-    
-    if (!testCategory || sampleTestDuration === undefined || liveTestDuration === undefined) {
-      return res.status(400).json({ 
-        error: 'Missing required fields (testCategory, sampleTestDuration, liveTestDuration)' 
-      });
-    }
+    if (!testCategory || sampleTestDuration === undefined || liveTestDuration === undefined)
+      return res.status(400).json({ error: 'Missing required fields (testCategory, sampleTestDuration, liveTestDuration)' });
 
-    // Find the test category - try slug first, then ID if valid
     let category = await TestCategory.findOne({ slug: testCategory });
-    
-    if (!category && mongoose.Types.ObjectId.isValid(testCategory)) {
+    if (!category && mongoose.Types.ObjectId.isValid(testCategory))
       category = await TestCategory.findById(testCategory);
-    }
-    
-    if (!category) {
-      return res.status(400).json({ error: 'Test category not found' });
-    }
+    if (!category) return res.status(400).json({ error: 'Test category not found' });
 
-    // Validate durations are positive numbers
-    if (sampleTestDuration <= 0 || liveTestDuration <= 0) {
-      return res.status(400).json({ 
-        error: 'Duration must be greater than 0 minutes' 
-      });
-    }
+    if (sampleTestDuration <= 0 || liveTestDuration <= 0)
+      return res.status(400).json({ error: 'Duration must be greater than 0 minutes' });
 
-    // Check if timer already exists for this category
     let timer = await TestTimer.findOne({ testCategory: category._id });
-    
     if (timer) {
-      // Update existing timer
       timer.sampleTestDuration = sampleTestDuration;
       timer.liveTestDuration = liveTestDuration;
       timer.updatedAt = new Date();
       await timer.save();
     } else {
-      // Create new timer
-      timer = new TestTimer({
-        testCategory: category._id,
-        sampleTestDuration,
-        liveTestDuration
-      });
+      timer = new TestTimer({ testCategory: category._id, sampleTestDuration, liveTestDuration });
       await timer.save();
     }
 
@@ -347,29 +187,18 @@ app.post('/api/test-timer', async (req, res) => {
 app.get('/api/test-timer/:testCategory', async (req, res) => {
   try {
     const { testCategory } = req.params;
-    
-    // First try to find by slug (most common case)
     let category = await TestCategory.findOne({ slug: testCategory });
-    
-    // If not found by slug and the parameter looks like a valid ObjectId, try by ID
-    if (!category && mongoose.Types.ObjectId.isValid(testCategory)) {
+    if (!category && mongoose.Types.ObjectId.isValid(testCategory))
       category = await TestCategory.findById(testCategory);
-    }
-    
-    if (!category) {
-      return res.status(404).json({ error: 'Test category not found' });
-    }
+    if (!category) return res.status(404).json({ error: 'Test category not found' });
 
-    // Find timer for this category
     const timer = await TestTimer.findOne({ testCategory: category._id });
-    
     if (!timer) {
-      // Return default durations if no timer configured
       return res.json({
         testCategory: category.name,
         testCategorySlug: category.slug,
-        sampleTestDuration: 30, // Default 30 minutes for sample test
-        liveTestDuration: 60,    // Default 60 minutes for live test
+        sampleTestDuration: 30,
+        liveTestDuration: 60,
         isDefault: true,
         message: 'Using default timer settings'
       });
@@ -391,36 +220,30 @@ app.get('/api/test-timer/:testCategory', async (req, res) => {
 
 app.get('/api/test-timers', async (req, res) => {
   try {
-    const timers = await TestTimer.find()
-      .populate('testCategory', 'name slug')
-      .sort({ createdAt: -1 });
-    
-    const formattedTimers = timers.map(timer => ({
-      testCategory: timer.testCategory.name,
-      testCategorySlug: timer.testCategory.slug,
-      sampleTestDuration: timer.sampleTestDuration,
-      liveTestDuration: timer.liveTestDuration,
-      updatedAt: timer.updatedAt
+    const timers = await TestTimer.find().populate('testCategory', 'name slug').sort({ createdAt: -1 });
+    const formattedTimers = timers.map(t => ({
+      testCategory: t.testCategory.name,
+      testCategorySlug: t.testCategory.slug,
+      sampleTestDuration: t.sampleTestDuration,
+      liveTestDuration: t.liveTestDuration,
+      updatedAt: t.updatedAt
     }));
-
     res.json(formattedTimers);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Question Routes
+// ─── Question Routes ──────────────────────────────────────────────────────────
+
 app.get("/api/questions", async (req, res) => {
   try {
     const { grade, testType, type, difficulty, testCategory } = req.query;
     const query = {};
 
-    // Find category if testCategory is provided
     if (testCategory) {
       const category = await TestCategory.findOne({ slug: testCategory });
-      if (!category) {
-        return res.status(400).json({ error: "Test category not found" });
-      }
+      if (!category) return res.status(400).json({ error: "Test category not found" });
       query.testCategory = category._id;
     }
 
@@ -429,11 +252,7 @@ app.get("/api/questions", async (req, res) => {
     if (type) query.type = type;
     if (difficulty) query.difficulty = difficulty;
 
-    const questions = await Question.find(query).populate('testCategory').sort({
-      grade: 1,
-      createdAt: -1,
-    });
-
+    const questions = await Question.find(query).populate('testCategory').sort({ grade: 1, createdAt: -1 });
     res.json(questions);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -442,76 +261,53 @@ app.get("/api/questions", async (req, res) => {
 
 app.post("/api/questions", async (req, res) => {
   try {
-    const { grade, type, question, testType = "sample", testCategory, image = "" } = req.body;
+    const { grade, type, question, testType = "sample", testCategory, image = "", marks = 1 } = req.body;
 
-    if (!grade || !type || !question || !testCategory) {
-      return res.status(400).json({
-        error: "Missing required fields (grade, type, question, testCategory)"
-      });
-    }
+    if (!grade || !type || !question || !testCategory)
+      return res.status(400).json({ error: "Missing required fields (grade, type, question, testCategory)" });
 
-    // First find the test category by its slug to get its ObjectId
     const category = await TestCategory.findOne({ slug: testCategory });
-    if (!category) {
-      return res.status(400).json({ error: "Test category not found" });
-    }
+    if (!category) return res.status(400).json({ error: "Test category not found" });
 
     let validationError;
     switch (type) {
       case "multiple-choice":
-        if (!req.body.options || !req.body.correctAnswer) {
+        if (!req.body.options || !req.body.correctAnswer)
           validationError = "Multiple-choice questions require options and correctAnswer";
-        }
         break;
       case "short-answer":
-        if (!req.body.correctAnswer) {
+        if (!req.body.correctAnswer)
           validationError = "Short-answer questions require correctAnswer";
-        }
         break;
       case "drag-and-drop":
-        if (!req.body.items || !req.body.correctOrder) {
+        if (!req.body.items || !req.body.correctOrder)
           validationError = "Drag-and-drop questions require items and correctOrder";
-        }
         break;
       case "match-pairs":
-        if (!req.body.pairs) {
+        if (!req.body.pairs)
           validationError = "Match-pairs questions require pairs";
-        }
         break;
     }
-
-    if (validationError) {
-      return res.status(400).json({ error: validationError });
-    }
+    if (validationError) return res.status(400).json({ error: validationError });
 
     const questionData = {
-      testCategory: category._id, // Use the ObjectId from the found category
+      testCategory: category._id,
       grade,
       type,
       question,
       testType,
       image,
+      marks: Number(marks) >= 0 ? Number(marks) : 1,
       difficulty: req.body.difficulty || "medium",
       tags: req.body.tags || [],
-      ...(type === "multiple-choice" && {
-        options: req.body.options,
-        correctAnswer: req.body.correctAnswer,
-      }),
-      ...(type === "short-answer" && {
-        correctAnswer: req.body.correctAnswer,
-      }),
-      ...(type === "drag-and-drop" && {
-        items: req.body.items,
-        correctOrder: req.body.correctOrder,
-      }),
-      ...(type === "match-pairs" && {
-        pairs: req.body.pairs,
-      }),
+      ...(type === "multiple-choice" && { options: req.body.options, correctAnswer: req.body.correctAnswer }),
+      ...(type === "short-answer" && { correctAnswer: req.body.correctAnswer }),
+      ...(type === "drag-and-drop" && { items: req.body.items, correctOrder: req.body.correctOrder }),
+      ...(type === "match-pairs" && { pairs: req.body.pairs }),
     };
 
     const newQuestion = new Question(questionData);
     await newQuestion.save();
-
     res.status(201).json(newQuestion);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -521,31 +317,20 @@ app.post("/api/questions", async (req, res) => {
 app.get("/api/questions/count", async (req, res) => {
   try {
     const { testCategory } = req.query;
-    console.log("testCategory:", testCategory);
-    
     const match = {};
 
     if (testCategory) {
-      // First find the test category by slug to get its ObjectId
       const category = await TestCategory.findOne({ slug: testCategory });
       if (category) {
         match.testCategory = category._id;
       } else {
-        // If category not found, return empty counts
-        return res.json({
-          totalQuestions: 0,
-          sampleQuestions: 0,
-          liveQuestions: 0,
-          gradeLevels: 0,
-          questionTypes: 0,
-          difficultyLevels: 0
-        });
+        return res.json({ totalQuestions: 0, sampleQuestions: 0, liveQuestions: 0, gradeLevels: 0, questionTypes: 0, difficultyLevels: 0 });
       }
     }
 
     const counts = await Question.aggregate([
       { $match: match },
-      { 
+      {
         $group: {
           _id: null,
           total: { $sum: 1 },
@@ -553,19 +338,13 @@ app.get("/api/questions/count", async (req, res) => {
           live: { $sum: { $cond: [{ $eq: ["$testType", "live"] }, 1, 0] } },
           grades: { $addToSet: "$grade" },
           types: { $addToSet: "$type" },
-          difficulties: { $addToSet: "$difficulty" }
+          difficulties: { $addToSet: "$difficulty" },
+          totalMarks: { $sum: { $ifNull: ["$marks", 1] } }
         }
       }
     ]);
 
-    const result = counts[0] || {
-      total: 0,
-      sample: 0,
-      live: 0,
-      grades: [],
-      types: [],
-      difficulties: []
-    };
+    const result = counts[0] || { total: 0, sample: 0, live: 0, grades: [], types: [], difficulties: [], totalMarks: 0 };
 
     res.json({
       totalQuestions: result.total,
@@ -573,7 +352,8 @@ app.get("/api/questions/count", async (req, res) => {
       liveQuestions: result.live,
       gradeLevels: result.grades.length,
       questionTypes: result.types.length,
-      difficultyLevels: result.difficulties.length
+      difficultyLevels: result.difficulties.length,
+      totalMarks: result.totalMarks
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -583,9 +363,7 @@ app.get("/api/questions/count", async (req, res) => {
 app.get("/api/questions/:id", async (req, res) => {
   try {
     const question = await Question.findById(req.params.id).populate('testCategory');
-    if (!question) {
-      return res.status(404).json({ error: "Question not found" });
-    }
+    if (!question) return res.status(404).json({ error: "Question not found" });
     res.json(question);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -594,24 +372,21 @@ app.get("/api/questions/:id", async (req, res) => {
 
 app.put("/api/questions/:id", async (req, res) => {
   try {
-    const { testCategory, ...updateData } = req.body;
-    
-    // If testCategory is provided and it's not already an ObjectId
+    const { testCategory, marks, ...updateData } = req.body;
+
     if (testCategory && !mongoose.Types.ObjectId.isValid(testCategory)) {
-      const category = await TestCategory.findOne({ 
-        $or: [
-          { slug: testCategory },
-          { name: testCategory }
-        ]
-      });
-      if (!category) {
-        return res.status(400).json({ error: "Test category not found" });
-      }
+      const category = await TestCategory.findOne({ $or: [{ slug: testCategory }, { name: testCategory }] });
+      if (!category) return res.status(400).json({ error: "Test category not found" });
       updateData.testCategory = category._id;
     } else if (testCategory) {
-      // If it's already an ObjectId, use it directly
       updateData.testCategory = testCategory;
     }
+
+    if (marks !== undefined) {
+      updateData.marks = Number(marks) >= 0 ? Number(marks) : 1;
+    }
+
+    updateData.updatedAt = new Date();
 
     const updatedQuestion = await Question.findByIdAndUpdate(
       req.params.id,
@@ -619,10 +394,7 @@ app.put("/api/questions/:id", async (req, res) => {
       { new: true, runValidators: true }
     ).populate('testCategory');
 
-    if (!updatedQuestion) {
-      return res.status(404).json({ error: "Question not found" });
-    }
-
+    if (!updatedQuestion) return res.status(404).json({ error: "Question not found" });
     res.json(updatedQuestion);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -632,34 +404,26 @@ app.put("/api/questions/:id", async (req, res) => {
 app.delete("/api/questions/:id", async (req, res) => {
   try {
     const deletedQuestion = await Question.findByIdAndDelete(req.params.id);
-    if (!deletedQuestion) {
-      return res.status(404).json({ error: "Question not found" });
-    }
+    if (!deletedQuestion) return res.status(404).json({ error: "Question not found" });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Test Endpoints
+// ─── Test Endpoints ───────────────────────────────────────────────────────────
+
 app.get("/api/sample-test/:grade", async (req, res) => {
   try {
     const { grade } = req.params;
     const { testCategory } = req.query;
-    
     const query = { grade, testType: "sample" };
     if (testCategory) query.testCategory = testCategory;
 
     let questions = await Question.find(query).limit(10);
-    
     if (questions.length === 0) {
-      questions = await Question.find({ 
-        grade: "default", 
-        testType: "sample",
-        ...(testCategory && { testCategory })
-      }).limit(10);
+      questions = await Question.find({ grade: "default", testType: "sample", ...(testCategory && { testCategory }) }).limit(10);
     }
-
     res.json(questions);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -670,59 +434,42 @@ app.get("/api/live-test/:grade", async (req, res) => {
   try {
     const { grade } = req.params;
     const { testCategory } = req.query;
-    
     const query = { grade, testType: "live" };
     if (testCategory) query.testCategory = testCategory;
 
     let questions = await Question.find(query).limit(20);
-    
     if (questions.length === 0) {
-      questions = await Question.find({ 
-        grade: "default", 
-        testType: "live",
-        ...(testCategory && { testCategory })
-      }).limit(20);
+      questions = await Question.find({ grade: "default", testType: "live", ...(testCategory && { testCategory }) }).limit(20);
     }
-
     res.json(questions);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Results Endpoints
+// ─── Results Endpoints ────────────────────────────────────────────────────────
+
 app.post('/api/results', async (req, res) => {
   try {
     const { student, answers, timeSpent, submittedAt, analysis, testCategory } = req.body;
-    
-    if (!student || !student.rollNo || !analysis || !testCategory) {
+
+    if (!student || !student.rollNo || !analysis || !testCategory)
       return res.status(400).json({ error: 'Missing required fields' });
-    }
 
-    // Always search by slug since that's what you're sending from frontend
     const category = await TestCategory.findOne({ slug: testCategory });
-    
-    if (!category) {
-      return res.status(400).json({ error: 'Test category not found' });
+    if (!category) return res.status(400).json({ error: 'Test category not found' });
+
+    const existingResult = await StudentResult.findOne({ rollNo: student.rollNo, testCategory: category._id });
+    if (existingResult) {
+      return res.status(200).json({ success: false, message: 'Score not updated - only first assessment is recorded' });
     }
 
-    const existingResult = await StudentResult.findOne({ 
-      rollNo: student.rollNo,
-      testCategory: category._id 
-    });
-    
-    if (existingResult) {
-      return res.status(200).json({ 
-        success: false,
-        message: 'Score not updated - only first assessment is recorded'
-      });
-    }
-    
     const newResult = new StudentResult({
       testCategory: category._id,
       rollNo: student.rollNo,
       name: student.name,
-      score: analysis.correctCount,
+      score: analysis.marksEarned ?? analysis.correctCount,
+      totalMarks: analysis.totalMarks ?? analysis.totalQuestions,
       grade: analysis.grade,
       percentage: analysis.percentage,
       answers,
@@ -731,12 +478,7 @@ app.post('/api/results', async (req, res) => {
     });
 
     await newResult.save();
-    
-    res.json({ 
-      success: true, 
-      message: 'Score recorded successfully',
-      result: newResult
-    });
+    res.json({ success: true, message: 'Score recorded successfully', result: newResult });
   } catch (error) {
     console.error('Error saving results:', error);
     res.status(500).json({ error: 'Failed to save results: ' + error.message });
@@ -746,36 +488,20 @@ app.post('/api/results', async (req, res) => {
 app.get('/api/results/:rollNo/:testCategory', async (req, res) => {
   try {
     const { rollNo, testCategory } = req.params;
-    console.log("rollNo:", rollNo);
-    console.log("testCategory:", testCategory);
-    
-    // If testCategory is not provided, return error
-    if (!testCategory) {
-      return res.status(400).json({ error: 'Test category is required' });
-    }
+    if (!testCategory) return res.status(400).json({ error: 'Test category is required' });
 
-    // Find the test category - only by slug since testCategory from URL is a slug
-    const category = await TestCategory.findOne({ 
-      slug: testCategory 
-    });
-    
-    if (!category) {
-      return res.status(404).json({ error: 'Test category not found' });
-    }
+    const category = await TestCategory.findOne({ slug: testCategory });
+    if (!category) return res.status(404).json({ error: 'Test category not found' });
 
-    // Query with both rollNo AND testCategory
-    const existingResult = await StudentResult.findOne({
-      rollNo: rollNo,
-      testCategory: category._id  // Use the ObjectId
-    });
-    
+    const existingResult = await StudentResult.findOne({ rollNo, testCategory: category._id });
     if (existingResult) {
-      res.json({ 
-        hasTakenTest: true, 
+      res.json({
+        hasTakenTest: true,
         student: {
           rollNo: existingResult.rollNo,
           name: existingResult.name,
           score: existingResult.score,
+          totalMarks: existingResult.totalMarks,
           grade: existingResult.grade,
           percentage: existingResult.percentage,
           submittedAt: existingResult.submittedAt
@@ -789,73 +515,51 @@ app.get('/api/results/:rollNo/:testCategory', async (req, res) => {
     res.status(500).json({ error: 'Failed to check student results' });
   }
 });
+
 app.get('/api/results', async (req, res) => {
   try {
     const { testCategory } = req.query;
     let query = {};
-    
-    console.log('Fetching results with testCategory:', testCategory);
-    
+
     if (testCategory) {
-      // Try to find category by slug first, then by ID
       let category = null;
-      
-      // Check if testCategory is a valid ObjectId string
-      const isValidObjectId = mongoose.Types.ObjectId.isValid(testCategory);
-      
-      if (isValidObjectId) {
-        // Try to find by ID first if it looks like an ObjectId
+      if (mongoose.Types.ObjectId.isValid(testCategory))
         category = await TestCategory.findById(testCategory);
-      }
-      
-      // If not found by ID, try by slug
-      if (!category) {
+      if (!category)
         category = await TestCategory.findOne({ slug: testCategory });
-      }
-      
-      console.log('Found category:', category ? { id: category._id, name: category.name, slug: category.slug } : 'Not found');
-      
       if (category) {
         query.testCategory = category._id;
-        console.log('Filtering by category ID:', category._id);
       } else {
-        // Category not found - return empty array instead of error
-        console.log('No category found for:', testCategory);
         return res.json([]);
       }
     }
-    
-    console.log('Final query:', JSON.stringify(query));
-    
-    // Execute the query with proper error handling
+
     const results = await StudentResult.find(query)
-      .populate('testCategory', 'name slug') // Populate category details
+      .populate('testCategory', 'name slug')
       .sort({ createdAt: -1 })
-      .lean(); // Use lean() for better performance
-    
-    console.log(`Found ${results.length} results`);
-    
+      .lean();
+
     res.json(results);
   } catch (error) {
     console.error('Error fetching results:', error);
-    // Send detailed error for debugging (remove in production)
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Failed to fetch results',
       message: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });
-// Health check endpoint
+
+// ─── Health Check ─────────────────────────────────────────────────────────────
+
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
+  res.json({
+    status: 'OK',
     dbStatus: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
     timestamp: new Date()
   });
 });
 
-// Start server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
