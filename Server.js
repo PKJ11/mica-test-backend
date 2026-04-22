@@ -41,13 +41,12 @@ const questionSchema = new mongoose.Schema({
   type: {
     type: String,
     required: true,
-    enum: ["multiple-choice", "short-answer", "drag-and-drop", "match-pairs"],
+    // ── CHANGE 1: Added "text" and "numeric" to question types ──────────────
+    enum: ["multiple-choice", "short-answer", "drag-and-drop", "match-pairs", "text", "numeric"],
   },
   question: { type: String, required: true },
   image: { type: String },
-  // ── Per-question marks (default = 1) ──────────────────────────────────────
   marks: { type: Number, default: 1, min: 0 },
-  // ─────────────────────────────────────────────────────────────────────────
   options: {
     type: [mongoose.Schema.Types.Mixed],
     required: function () { return this.type === "multiple-choice"; },
@@ -64,6 +63,9 @@ const questionSchema = new mongoose.Schema({
   pairs: [{ id: String, left: String, right: String }],
   difficulty: { type: String, enum: ["easy", "medium", "hard"], default: "medium" },
   tags: [String],
+  // ── CHANGE 2: groups array field — references Group documents by ObjectId ──
+  groups: [{ type: mongoose.Schema.Types.ObjectId, ref: "Group" }],
+  // ──────────────────────────────────────────────────────────────────────────
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
@@ -71,12 +73,24 @@ const questionSchema = new mongoose.Schema({
 
 const Question = mongoose.model("Question", questionSchema);
 
+// ── CHANGE 3: Group Schema ────────────────────────────────────────────────────
+const groupSchema = new mongoose.Schema({
+  groupId: { type: String, required: true, unique: true, trim: true },
+  questions: [{ type: mongoose.Schema.Types.ObjectId, ref: "Question" }],
+  testCategory: { type: mongoose.Schema.Types.ObjectId, ref: "TestCategory", required: false },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+
+const Group = mongoose.model('Group', groupSchema);
+// ─────────────────────────────────────────────────────────────────────────────
+
 const studentResultSchema = new mongoose.Schema({
   testCategory: { type: mongoose.Schema.Types.ObjectId, ref: "TestCategory", required: true },
   rollNo: { type: String, required: true },
   name: { type: String, required: true },
-  score: { type: Number, required: true },         // weighted marks earned
-  totalMarks: { type: Number, required: false },   // total possible marks
+  score: { type: Number, required: true },
+  totalMarks: { type: Number, required: false },
   grade: { type: String, required: true },
   percentage: { type: Number, required: false },
   answers: { type: Array, required: true },
@@ -97,7 +111,7 @@ const testTimerSchema = new mongoose.Schema({
 
 const TestTimer = mongoose.model('TestTimer', testTimerSchema);
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const generateSlug = (name) =>
   slugify(name, { lower: true, strict: true, remove: /[*+~.()'"!:@]/g });
@@ -252,7 +266,10 @@ app.get("/api/questions", async (req, res) => {
     if (type) query.type = type;
     if (difficulty) query.difficulty = difficulty;
 
-    const questions = await Question.find(query).populate('testCategory').sort({ grade: 1, createdAt: -1 });
+    const questions = await Question.find(query)
+      .populate('testCategory')
+      .populate('groups')
+      .sort({ grade: 1, createdAt: -1 });
     res.json(questions);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -261,7 +278,10 @@ app.get("/api/questions", async (req, res) => {
 
 app.post("/api/questions", async (req, res) => {
   try {
-    const { grade, type, question, testType = "sample", testCategory, image = "", marks = 1 } = req.body;
+    const {
+      grade, type, question, testType = "sample", testCategory,
+      image = "", marks = 1, groups = []
+    } = req.body;
 
     if (!grade || !type || !question || !testCategory)
       return res.status(400).json({ error: "Missing required fields (grade, type, question, testCategory)" });
@@ -287,8 +307,22 @@ app.post("/api/questions", async (req, res) => {
         if (!req.body.pairs)
           validationError = "Match-pairs questions require pairs";
         break;
+      case "text":
+        // Optional: correctAnswer can be provided as a model answer
+        break;
+      case "numeric":
+        if (req.body.correctAnswer === undefined || req.body.correctAnswer === null)
+          validationError = "Numeric questions require a correctAnswer (number)";
+        break;
     }
     if (validationError) return res.status(400).json({ error: validationError });
+
+    // Validate group IDs if provided
+    if (groups.length > 0) {
+      const validGroups = await Group.find({ _id: { $in: groups } }).select('_id');
+      if (validGroups.length !== groups.length)
+        return res.status(400).json({ error: "One or more group IDs are invalid" });
+    }
 
     const questionData = {
       testCategory: category._id,
@@ -300,10 +334,13 @@ app.post("/api/questions", async (req, res) => {
       marks: Number(marks) >= 0 ? Number(marks) : 1,
       difficulty: req.body.difficulty || "medium",
       tags: req.body.tags || [],
+      groups,
       ...(type === "multiple-choice" && { options: req.body.options, correctAnswer: req.body.correctAnswer }),
       ...(type === "short-answer" && { correctAnswer: req.body.correctAnswer }),
       ...(type === "drag-and-drop" && { items: req.body.items, correctOrder: req.body.correctOrder }),
       ...(type === "match-pairs" && { pairs: req.body.pairs }),
+      ...(type === "text" && req.body.correctAnswer !== undefined && { correctAnswer: req.body.correctAnswer }),
+      ...(type === "numeric" && { correctAnswer: Number(req.body.correctAnswer) }),
     };
 
     const newQuestion = new Question(questionData);
@@ -362,7 +399,9 @@ app.get("/api/questions/count", async (req, res) => {
 
 app.get("/api/questions/:id", async (req, res) => {
   try {
-    const question = await Question.findById(req.params.id).populate('testCategory');
+    const question = await Question.findById(req.params.id)
+      .populate('testCategory')
+      .populate('groups');
     if (!question) return res.status(404).json({ error: "Question not found" });
     res.json(question);
   } catch (error) {
@@ -372,7 +411,7 @@ app.get("/api/questions/:id", async (req, res) => {
 
 app.put("/api/questions/:id", async (req, res) => {
   try {
-    const { testCategory, marks, ...updateData } = req.body;
+    const { testCategory, marks, groups, ...updateData } = req.body;
 
     if (testCategory && !mongoose.Types.ObjectId.isValid(testCategory)) {
       const category = await TestCategory.findOne({ $or: [{ slug: testCategory }, { name: testCategory }] });
@@ -386,13 +425,22 @@ app.put("/api/questions/:id", async (req, res) => {
       updateData.marks = Number(marks) >= 0 ? Number(marks) : 1;
     }
 
+    if (groups !== undefined) {
+      if (groups.length > 0) {
+        const validGroups = await Group.find({ _id: { $in: groups } }).select('_id');
+        if (validGroups.length !== groups.length)
+          return res.status(400).json({ error: "One or more group IDs are invalid" });
+      }
+      updateData.groups = groups;
+    }
+
     updateData.updatedAt = new Date();
 
     const updatedQuestion = await Question.findByIdAndUpdate(
       req.params.id,
       updateData,
       { new: true, runValidators: true }
-    ).populate('testCategory');
+    ).populate('testCategory').populate('groups');
 
     if (!updatedQuestion) return res.status(404).json({ error: "Question not found" });
     res.json(updatedQuestion);
@@ -405,6 +453,120 @@ app.delete("/api/questions/:id", async (req, res) => {
   try {
     const deletedQuestion = await Question.findByIdAndDelete(req.params.id);
     if (!deletedQuestion) return res.status(404).json({ error: "Question not found" });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Group Routes ─────────────────────────────────────────────────────────────
+
+// Create a new group
+app.post('/api/groups', async (req, res) => {
+  try {
+    const { groupId, questions = [], testCategory } = req.body;
+    if (!groupId) return res.status(400).json({ error: 'groupId is required' });
+
+    const existing = await Group.findOne({ groupId });
+    if (existing) return res.status(400).json({ error: 'Group with this groupId already exists' });
+
+    let categoryId;
+    if (testCategory) {
+      const category = await TestCategory.findOne({ slug: testCategory });
+      if (!category) return res.status(400).json({ error: 'Test category not found' });
+      categoryId = category._id;
+    }
+
+    // Validate question IDs if provided
+    if (questions.length > 0) {
+      const validQuestions = await Question.find({ _id: { $in: questions } }).select('_id');
+      if (validQuestions.length !== questions.length)
+        return res.status(400).json({ error: 'One or more question IDs are invalid' });
+    }
+
+    const newGroup = new Group({ groupId, questions, testCategory: categoryId });
+    await newGroup.save();
+    res.status(201).json(newGroup);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all groups (optionally filter by testCategory)
+app.get('/api/groups', async (req, res) => {
+  try {
+    const { testCategory } = req.query;
+    const query = {};
+
+    if (testCategory) {
+      const category = await TestCategory.findOne({ slug: testCategory });
+      if (!category) return res.status(400).json({ error: 'Test category not found' });
+      query.testCategory = category._id;
+    }
+
+    const groups = await Group.find(query)
+      .populate('questions')
+      .populate('testCategory', 'name slug')
+      .sort({ createdAt: -1 });
+    res.json(groups);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get a single group by groupId
+app.get('/api/groups/:groupId', async (req, res) => {
+  try {
+    const group = await Group.findOne({ groupId: req.params.groupId })
+      .populate('questions')
+      .populate('testCategory', 'name slug');
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+    res.json(group);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update a group (add/remove questions, rename groupId)
+app.put('/api/groups/:groupId', async (req, res) => {
+  try {
+    const { questions, testCategory, ...updateData } = req.body;
+
+    if (questions !== undefined) {
+      if (questions.length > 0) {
+        const validQuestions = await Question.find({ _id: { $in: questions } }).select('_id');
+        if (validQuestions.length !== questions.length)
+          return res.status(400).json({ error: 'One or more question IDs are invalid' });
+      }
+      updateData.questions = questions;
+    }
+
+    if (testCategory !== undefined) {
+      const category = await TestCategory.findOne({ slug: testCategory });
+      if (!category) return res.status(400).json({ error: 'Test category not found' });
+      updateData.testCategory = category._id;
+    }
+
+    updateData.updatedAt = new Date();
+
+    const updatedGroup = await Group.findOneAndUpdate(
+      { groupId: req.params.groupId },
+      updateData,
+      { new: true, runValidators: true }
+    ).populate('questions').populate('testCategory', 'name slug');
+
+    if (!updatedGroup) return res.status(404).json({ error: 'Group not found' });
+    res.json(updatedGroup);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete a group
+app.delete('/api/groups/:groupId', async (req, res) => {
+  try {
+    const deletedGroup = await Group.findOneAndDelete({ groupId: req.params.groupId });
+    if (!deletedGroup) return res.status(404).json({ error: 'Group not found' });
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
