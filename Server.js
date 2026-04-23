@@ -557,6 +557,115 @@ app.delete('/api/groups/:groupId', async (req, res) => {
   }
 });
 
+// Add this new endpoint after your existing group routes
+
+// POST /api/groups/:groupId/add-to-test-category
+// Adds all questions from a group to a test category and also adds the test category to the group
+app.post('/api/groups/:groupId/add-to-test-category', async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { testCategory } = req.body;
+    
+    if (!testCategory) {
+      return res.status(400).json({ error: 'testCategory slug is required' });
+    }
+    
+    // Find the test category
+    const category = await TestCategory.findOne({ slug: testCategory });
+    if (!category) {
+      return res.status(404).json({ error: 'Test category not found' });
+    }
+    
+    // Find the group
+    const group = await Group.findOne({ groupId });
+    if (!group) {
+      return res.status(404).json({ error: 'Group not found' });
+    }
+    
+    // Get all questions in the group
+    const questions = await Question.find({ _id: { $in: group.questions } });
+    
+    if (questions.length === 0) {
+      return res.status(400).json({ error: 'No questions found in this group' });
+    }
+    
+    // Update each question to include the test category if not already present
+    const updatedQuestions = [];
+    for (const question of questions) {
+      const currentCategories = question.testCategory || [];
+      const categoryIds = currentCategories.map(id => id.toString());
+      
+      // Check if the category is already added
+      if (!categoryIds.includes(category._id.toString())) {
+        question.testCategory = [...currentCategories, category._id];
+        await question.save();
+        updatedQuestions.push(question._id);
+      }
+    }
+    
+    // Add the test category to the group's testCategory array if not already present
+    const currentGroupCategories = group.testCategory || [];
+    const groupCategoryIds = currentGroupCategories.map(id => id.toString());
+    
+    if (!groupCategoryIds.includes(category._id.toString())) {
+      group.testCategory = [...currentGroupCategories, category._id];
+      await group.save();
+    }
+    
+    res.json({
+      success: true,
+      message: `Added ${updatedQuestions.length} questions to test category "${testCategory}"`,
+      questionsAdded: updatedQuestions.length,
+      totalQuestions: questions.length,
+      groupUpdated: true
+    });
+  } catch (error) {
+    console.error('Error adding group questions to test category:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/groups/:groupId/questions-not-in-category
+// Get questions from a group that are not already in a specific test category
+app.get('/api/groups/:groupId/questions-not-in-category', async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { testCategory } = req.query;
+    
+    if (!testCategory) {
+      return res.status(400).json({ error: 'testCategory query parameter is required' });
+    }
+    
+    // Find the test category
+    const category = await TestCategory.findOne({ slug: testCategory });
+    if (!category) {
+      return res.status(404).json({ error: 'Test category not found' });
+    }
+    
+    // Find the group
+    const group = await Group.findOne({ groupId });
+    if (!group) {
+      return res.status(404).json({ error: 'Group not found' });
+    }
+    
+    // Get all questions in the group and filter those not in the test category
+    const questions = await Question.find({ 
+      _id: { $in: group.questions },
+      testCategory: { $nin: [category._id] }
+    }).populate('testCategory', 'name slug');
+    
+    res.json({
+      groupId: group.groupId,
+      totalQuestionsInGroup: group.questions.length,
+      questionsNotInCategory: questions.length,
+      questions: questions
+    });
+  } catch (error) {
+    console.error('Error fetching questions not in category:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ─── Test Endpoints ───────────────────────────────────────────────────────────
 
 app.get("/api/sample-test/:grade", async (req, res) => {
