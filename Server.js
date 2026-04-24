@@ -28,14 +28,10 @@ const testCategorySchema = new mongoose.Schema({
 const TestCategory = mongoose.model('TestCategory', testCategorySchema);
 
 const questionSchema = new mongoose.Schema({
-  // ── testCategory is now optional (array) ──────────────────────────────────
+  // ── testCategory is optional (array) ─────────────────────────────────────
   testCategory: [{ type: mongoose.Schema.Types.ObjectId, ref: "TestCategory" }],
-  testType: { type: String, enum: ["sample", "live"], default: "sample", required: true },
-  grade: {
-    type: String,
-    required: true,
-    enum: ["Grade4","Grade5","Grade6","Grade7","Grade8","Grade9","Grade10","default"],
-  },
+  // ── questionName: short identifier for the question ───────────────────────
+  questionName: { type: String, default: "", trim: true },
   type: {
     type: String,
     required: true,
@@ -58,10 +54,16 @@ const questionSchema = new mongoose.Schema({
 });
 const Question = mongoose.model("Question", questionSchema);
 
+// Group type represents how many questions are selected from this group during a test
+// e.g. "1 of 2" means pick 1 question from this group of 2
+const GROUP_TYPES = ["1 of 2", "2 of 5", "1 of 3", "4 of 10"];
+
 const groupSchema = new mongoose.Schema({
   groupId:      { type: String, required: true, unique: true, trim: true },
   name:         { type: String, default: "" },
   description:  { type: String, default: "" },
+  // groupType: how many questions are selected from this group
+  groupType:    { type: String, enum: GROUP_TYPES, default: null },
   questions:    [{ type: mongoose.Schema.Types.ObjectId, ref: "Question" }],
   // testCategory is optional on groups too
   testCategory: [{ type: mongoose.Schema.Types.ObjectId, ref: "TestCategory" }],
@@ -105,14 +107,12 @@ const generateSlug = (name) =>
  * contains this question's ID, and any groups NOT listed no longer contain it.
  */
 const syncGroupsForQuestion = async (questionId, groupIds = []) => {
-  // Add question to each listed group (if not already there)
   if (groupIds.length > 0) {
     await Group.updateMany(
       { _id: { $in: groupIds } },
       { $addToSet: { questions: questionId } }
     );
   }
-  // Remove question from any groups not in the new list
   await Group.updateMany(
     { _id: { $nin: groupIds }, questions: questionId },
     { $pull: { questions: questionId } }
@@ -213,25 +213,23 @@ app.get('/api/test-timers', async (req, res) => {
 
 // ─── Question Routes ──────────────────────────────────────────────────────────
 
-// GET /api/questions  – testCategory can be a slug (filters to that category only) or omitted (all questions)
+// GET /api/questions
 app.get("/api/questions", async (req, res) => {
   try {
-    const { grade, testType, type, difficulty, testCategory } = req.query;
+    const { type, difficulty, testCategory } = req.query;
     const query = {};
 
     if (testCategory) {
       const category = await TestCategory.findOne({ slug: testCategory });
       if (!category) return res.status(400).json({ error: "Test category not found" });
-      query.testCategory = category._id; // matches array field via $elemMatch semantics in Mongo
+      query.testCategory = category._id;
     }
-    if (grade)       query.grade = grade;
-    if (testType)    query.testType = testType;
     if (type)        query.type = type;
     if (difficulty)  query.difficulty = difficulty;
 
     const questions = await Question.find(query)
       .populate('testCategory', 'name slug')
-      .populate('groups', 'groupId name')
+      .populate('groups', 'groupId name groupType')
       .sort({ createdAt: -1 });
     res.json(questions);
   } catch (error) {
@@ -239,20 +237,20 @@ app.get("/api/questions", async (req, res) => {
   }
 });
 
-// POST /api/questions  – testCategory is optional array of slugs
+// POST /api/questions
 app.post("/api/questions", async (req, res) => {
   try {
     const {
-      grade, type, question,
-      testType  = "sample",
-      testCategory = [],   // array of slugs or empty
+      type, question,
+      questionName = "",
+      testCategory = [],
       image = "",
       marks = 1,
       groups = []
     } = req.body;
 
-    if (!grade || !type || !question)
-      return res.status(400).json({ error: "Missing required fields (grade, type, question)" });
+    if (!type || !question)
+      return res.status(400).json({ error: "Missing required fields (type, question)" });
 
     // Resolve testCategory slugs → ObjectIds
     const categoryIds = [];
@@ -289,7 +287,6 @@ app.post("/api/questions", async (req, res) => {
     }
     if (validationError) return res.status(400).json({ error: validationError });
 
-    // Validate group IDs
     if (groups.length > 0) {
       const validGroups = await Group.find({ _id: { $in: groups } }).select('_id');
       if (validGroups.length !== groups.length)
@@ -298,7 +295,8 @@ app.post("/api/questions", async (req, res) => {
 
     const questionData = {
       testCategory: categoryIds,
-      grade, type, question, testType, image,
+      questionName,
+      type, question, image,
       marks:      Number(marks) >= 0 ? Number(marks) : 1,
       difficulty: req.body.difficulty || "medium",
       tags:       req.body.tags || [],
@@ -314,12 +312,11 @@ app.post("/api/questions", async (req, res) => {
     const newQuestion = new Question(questionData);
     await newQuestion.save();
 
-    // Bidirectional: add question to each group
     await syncGroupsForQuestion(newQuestion._id, groups);
 
     const populated = await Question.findById(newQuestion._id)
       .populate('testCategory', 'name slug')
-      .populate('groups', 'groupId name');
+      .populate('groups', 'groupId name groupType');
     res.status(201).json(populated);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -334,14 +331,14 @@ app.get("/api/questions/count", async (req, res) => {
     if (testCategory) {
       const category = await TestCategory.findOne({ slug: testCategory });
       if (category) match.testCategory = category._id;
-      else return res.json({ totalQuestions: 0, sampleQuestions: 0, liveQuestions: 0, gradeLevels: 0, questionTypes: 0, difficultyLevels: 0, totalMarks: 0 });
+      else return res.json({ totalQuestions: 0, difficultyLevels: 0, totalMarks: 0 });
     }
     const counts = await Question.aggregate([
       { $match: match },
-      { $group: { _id: null, total: { $sum: 1 }, sample: { $sum: { $cond: [{ $eq: ["$testType","sample"] }, 1, 0] } }, live: { $sum: { $cond: [{ $eq: ["$testType","live"] }, 1, 0] } }, grades: { $addToSet: "$grade" }, types: { $addToSet: "$type" }, difficulties: { $addToSet: "$difficulty" }, totalMarks: { $sum: { $ifNull: ["$marks", 1] } } } }
+      { $group: { _id: null, total: { $sum: 1 }, types: { $addToSet: "$type" }, difficulties: { $addToSet: "$difficulty" }, totalMarks: { $sum: { $ifNull: ["$marks", 1] } } } }
     ]);
-    const r = counts[0] || { total: 0, sample: 0, live: 0, grades: [], types: [], difficulties: [], totalMarks: 0 };
-    res.json({ totalQuestions: r.total, sampleQuestions: r.sample, liveQuestions: r.live, gradeLevels: r.grades.length, questionTypes: r.types.length, difficultyLevels: r.difficulties.length, totalMarks: r.totalMarks });
+    const r = counts[0] || { total: 0, types: [], difficulties: [], totalMarks: 0 };
+    res.json({ totalQuestions: r.total, questionTypes: r.types.length, difficultyLevels: r.difficulties.length, totalMarks: r.totalMarks });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -352,7 +349,7 @@ app.get("/api/questions/:id", async (req, res) => {
   try {
     const question = await Question.findById(req.params.id)
       .populate('testCategory', 'name slug')
-      .populate('groups', 'groupId name');
+      .populate('groups', 'groupId name groupType');
     if (!question) return res.status(404).json({ error: "Question not found" });
     res.json(question);
   } catch (error) {
@@ -365,7 +362,6 @@ app.put("/api/questions/:id", async (req, res) => {
   try {
     const { testCategory, marks, groups, ...updateData } = req.body;
 
-    // Handle testCategory (array of slugs)
     if (testCategory !== undefined) {
       const slugList = Array.isArray(testCategory) ? testCategory : [testCategory].filter(Boolean);
       const categoryIds = [];
@@ -392,11 +388,10 @@ app.put("/api/questions/:id", async (req, res) => {
 
     const updatedQuestion = await Question.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true })
       .populate('testCategory', 'name slug')
-      .populate('groups', 'groupId name');
+      .populate('groups', 'groupId name groupType');
 
     if (!updatedQuestion) return res.status(404).json({ error: "Question not found" });
 
-    // Bidirectional sync
     if (groups !== undefined) {
       await syncGroupsForQuestion(updatedQuestion._id, updatedQuestion.groups);
     }
@@ -412,7 +407,6 @@ app.delete("/api/questions/:id", async (req, res) => {
   try {
     const deletedQuestion = await Question.findByIdAndDelete(req.params.id);
     if (!deletedQuestion) return res.status(404).json({ error: "Question not found" });
-    // Remove from all groups
     await Group.updateMany({ questions: req.params.id }, { $pull: { questions: req.params.id } });
     res.json({ success: true });
   } catch (error) {
@@ -424,11 +418,16 @@ app.delete("/api/questions/:id", async (req, res) => {
 
 app.post('/api/groups', async (req, res) => {
   try {
-    const { groupId, name = "", description = "", questions = [], testCategory = [] } = req.body;
+    const { groupId, name = "", description = "", questions = [], testCategory = [], groupType = null } = req.body;
     if (!groupId) return res.status(400).json({ error: 'groupId is required' });
 
     const existing = await Group.findOne({ groupId });
     if (existing) return res.status(400).json({ error: 'Group with this groupId already exists' });
+
+    // Validate groupType if provided
+    if (groupType && !GROUP_TYPES.includes(groupType)) {
+      return res.status(400).json({ error: `Invalid groupType. Must be one of: ${GROUP_TYPES.join(', ')}` });
+    }
 
     const slugList = Array.isArray(testCategory) ? testCategory : [testCategory].filter(Boolean);
     const categoryIds = [];
@@ -443,16 +442,15 @@ app.post('/api/groups', async (req, res) => {
         return res.status(400).json({ error: 'One or more question IDs are invalid' });
     }
 
-    const newGroup = new Group({ groupId, name, description, questions, testCategory: categoryIds });
+    const newGroup = new Group({ groupId, name, description, questions, testCategory: categoryIds, groupType });
     await newGroup.save();
 
-    // Bidirectional: add group to each question
     if (questions.length > 0) {
       await Question.updateMany({ _id: { $in: questions } }, { $addToSet: { groups: newGroup._id } });
     }
 
     const populated = await Group.findById(newGroup._id)
-      .populate('questions', 'question type grade difficulty marks')
+      .populate('questions', 'question type difficulty marks questionName')
       .populate('testCategory', 'name slug');
     res.status(201).json(populated);
   } catch (error) {
@@ -469,7 +467,7 @@ app.get('/api/groups', async (req, res) => {
       if (category) query.testCategory = category._id;
     }
     const groups = await Group.find(query)
-      .populate('questions', 'question type grade difficulty marks testType')
+      .populate('questions', 'question type difficulty marks questionName')
       .populate('testCategory', 'name slug')
       .sort({ createdAt: -1 });
     res.json(groups);
@@ -481,7 +479,7 @@ app.get('/api/groups', async (req, res) => {
 app.get('/api/groups/:groupId', async (req, res) => {
   try {
     const group = await Group.findOne({ groupId: req.params.groupId })
-      .populate('questions', 'question type grade difficulty marks testType')
+      .populate('questions', 'question type difficulty marks questionName')
       .populate('testCategory', 'name slug');
     if (!group) return res.status(404).json({ error: 'Group not found' });
     res.json(group);
@@ -492,7 +490,14 @@ app.get('/api/groups/:groupId', async (req, res) => {
 
 app.put('/api/groups/:groupId', async (req, res) => {
   try {
-    const { questions, testCategory, ...updateData } = req.body;
+    const { questions, testCategory, groupType, ...updateData } = req.body;
+
+    if (groupType !== undefined) {
+      if (groupType !== null && !GROUP_TYPES.includes(groupType)) {
+        return res.status(400).json({ error: `Invalid groupType. Must be one of: ${GROUP_TYPES.join(', ')}` });
+      }
+      updateData.groupType = groupType;
+    }
 
     if (questions !== undefined) {
       if (questions.length > 0) {
@@ -522,19 +527,14 @@ app.put('/api/groups/:groupId', async (req, res) => {
       { groupId: req.params.groupId },
       updateData,
       { new: true, runValidators: true }
-    ).populate('questions', 'question type grade difficulty marks testType')
+    ).populate('questions', 'question type difficulty marks questionName')
      .populate('testCategory', 'name slug');
 
-    // Bidirectional sync if questions changed
     if (questions !== undefined) {
       const newQIds = questions.map(id => id.toString());
       const oldQIds = oldGroup.questions.map(id => id.toString());
-
-      // Added to group → add group to those questions
       const added   = newQIds.filter(id => !oldQIds.includes(id));
-      // Removed from group → remove group from those questions
       const removed = oldQIds.filter(id => !newQIds.includes(id));
-
       if (added.length)   await Question.updateMany({ _id: { $in: added } },   { $addToSet: { groups: updatedGroup._id } });
       if (removed.length) await Question.updateMany({ _id: { $in: removed } }, { $pull: { groups: updatedGroup._id } });
     }
@@ -549,7 +549,6 @@ app.delete('/api/groups/:groupId', async (req, res) => {
   try {
     const deletedGroup = await Group.findOneAndDelete({ groupId: req.params.groupId });
     if (!deletedGroup) return res.status(404).json({ error: 'Group not found' });
-    // Remove group ref from all questions
     await Question.updateMany({ groups: deletedGroup._id }, { $pull: { groups: deletedGroup._id } });
     res.json({ success: true });
   } catch (error) {
@@ -557,111 +556,66 @@ app.delete('/api/groups/:groupId', async (req, res) => {
   }
 });
 
-// Add this new endpoint after your existing group routes
-
 // POST /api/groups/:groupId/add-to-test-category
-// Adds all questions from a group to a test category and also adds the test category to the group
 app.post('/api/groups/:groupId/add-to-test-category', async (req, res) => {
   try {
     const { groupId } = req.params;
     const { testCategory } = req.body;
-    
-    if (!testCategory) {
-      return res.status(400).json({ error: 'testCategory slug is required' });
-    }
-    
-    // Find the test category
+    if (!testCategory) return res.status(400).json({ error: 'testCategory slug is required' });
+
     const category = await TestCategory.findOne({ slug: testCategory });
-    if (!category) {
-      return res.status(404).json({ error: 'Test category not found' });
-    }
-    
-    // Find the group
+    if (!category) return res.status(404).json({ error: 'Test category not found' });
+
     const group = await Group.findOne({ groupId });
-    if (!group) {
-      return res.status(404).json({ error: 'Group not found' });
-    }
-    
-    // Get all questions in the group
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+
     const questions = await Question.find({ _id: { $in: group.questions } });
-    
-    if (questions.length === 0) {
-      return res.status(400).json({ error: 'No questions found in this group' });
-    }
-    
-    // Update each question to include the test category if not already present
+    if (questions.length === 0) return res.status(400).json({ error: 'No questions found in this group' });
+
     const updatedQuestions = [];
     for (const question of questions) {
       const currentCategories = question.testCategory || [];
       const categoryIds = currentCategories.map(id => id.toString());
-      
-      // Check if the category is already added
       if (!categoryIds.includes(category._id.toString())) {
         question.testCategory = [...currentCategories, category._id];
         await question.save();
         updatedQuestions.push(question._id);
       }
     }
-    
-    // Add the test category to the group's testCategory array if not already present
+
     const currentGroupCategories = group.testCategory || [];
     const groupCategoryIds = currentGroupCategories.map(id => id.toString());
-    
     if (!groupCategoryIds.includes(category._id.toString())) {
       group.testCategory = [...currentGroupCategories, category._id];
       await group.save();
     }
-    
-    res.json({
-      success: true,
-      message: `Added ${updatedQuestions.length} questions to test category "${testCategory}"`,
-      questionsAdded: updatedQuestions.length,
-      totalQuestions: questions.length,
-      groupUpdated: true
-    });
+
+    res.json({ success: true, message: `Added ${updatedQuestions.length} questions to test category "${testCategory}"`, questionsAdded: updatedQuestions.length, totalQuestions: questions.length, groupUpdated: true });
   } catch (error) {
-    console.error('Error adding group questions to test category:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // GET /api/groups/:groupId/questions-not-in-category
-// Get questions from a group that are not already in a specific test category
 app.get('/api/groups/:groupId/questions-not-in-category', async (req, res) => {
   try {
     const { groupId } = req.params;
     const { testCategory } = req.query;
-    
-    if (!testCategory) {
-      return res.status(400).json({ error: 'testCategory query parameter is required' });
-    }
-    
-    // Find the test category
+    if (!testCategory) return res.status(400).json({ error: 'testCategory query parameter is required' });
+
     const category = await TestCategory.findOne({ slug: testCategory });
-    if (!category) {
-      return res.status(404).json({ error: 'Test category not found' });
-    }
-    
-    // Find the group
+    if (!category) return res.status(404).json({ error: 'Test category not found' });
+
     const group = await Group.findOne({ groupId });
-    if (!group) {
-      return res.status(404).json({ error: 'Group not found' });
-    }
-    
-    // Get all questions in the group and filter those not in the test category
-    const questions = await Question.find({ 
+    if (!group) return res.status(404).json({ error: 'Group not found' });
+
+    const questions = await Question.find({
       _id: { $in: group.questions },
       testCategory: { $nin: [category._id] }
     }).populate('testCategory', 'name slug');
-    
-    res.json({
-      groupId: group.groupId,
-      totalQuestionsInGroup: group.questions.length,
-      questionsNotInCategory: questions.length,
-      questions: questions
-    });
+
+    res.json({ groupId: group.groupId, totalQuestionsInGroup: group.questions.length, questionsNotInCategory: questions.length, questions });
   } catch (error) {
-    console.error('Error fetching questions not in category:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -672,20 +626,12 @@ app.get("/api/sample-test/:grade", async (req, res) => {
   try {
     const { grade } = req.params;
     const { testCategory } = req.query;
-    const query = { grade, testType: "sample" };
+    const query = { grade };
     if (testCategory) {
       const cat = await TestCategory.findOne({ slug: testCategory });
       if (cat) query.testCategory = cat._id;
     }
-    let questions = await Question.find(query).limit(10);
-    if (questions.length === 0) {
-      const fallback = { grade: "default", testType: "sample" };
-      if (testCategory) {
-        const cat = await TestCategory.findOne({ slug: testCategory });
-        if (cat) fallback.testCategory = cat._id;
-      }
-      questions = await Question.find(fallback).limit(10);
-    }
+    const questions = await Question.find(query).limit(10);
     res.json(questions);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -696,20 +642,12 @@ app.get("/api/live-test/:grade", async (req, res) => {
   try {
     const { grade } = req.params;
     const { testCategory } = req.query;
-    const query = { grade, testType: "live" };
+    const query = { grade };
     if (testCategory) {
       const cat = await TestCategory.findOne({ slug: testCategory });
       if (cat) query.testCategory = cat._id;
     }
-    let questions = await Question.find(query).limit(20);
-    if (questions.length === 0) {
-      const fallback = { grade: "default", testType: "live" };
-      if (testCategory) {
-        const cat = await TestCategory.findOne({ slug: testCategory });
-        if (cat) fallback.testCategory = cat._id;
-      }
-      questions = await Question.find(fallback).limit(20);
-    }
+    const questions = await Question.find(query).limit(20);
     res.json(questions);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -736,7 +674,7 @@ app.post('/api/results', async (req, res) => {
       rollNo: student.rollNo, name: student.name,
       score:      analysis.marksEarned ?? analysis.correctCount,
       totalMarks: analysis.totalMarks  ?? analysis.totalQuestions,
-      grade: analysis.grade, percentage: analysis.percentage,
+      grade: analysis.grade || "default", percentage: analysis.percentage,
       answers, timeSpent, submittedAt
     });
     await newResult.save();
