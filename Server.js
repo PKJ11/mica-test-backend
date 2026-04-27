@@ -90,6 +90,22 @@ const testTimerSchema = new mongoose.Schema({
 });
 const TestTimer = mongoose.model('TestTimer', testTimerSchema);
 
+// ─── Student Schema ───────────────────────────────────────────────────────────
+ 
+const studentSchema = new mongoose.Schema({
+  rollNo:      { type: String, required: true, trim: true },
+  name:        { type: String, required: true, trim: true },
+  program:     { type: String, default: "", trim: true },
+  phone:       { type: String, default: "", trim: true },
+  testCategory: [{ type: mongoose.Schema.Types.ObjectId, ref: "TestCategory" }],
+  createdAt:   { type: Date, default: Date.now },
+  updatedAt:   { type: Date, default: Date.now }
+});
+ 
+// Compound index: a student (rollNo) is unique per test category
+studentSchema.index({ rollNo: 1, testCategory: 1 });
+const Student = mongoose.model('Student', studentSchema);
+
 // ─── Marks Schemas ────────────────────────────────────────────────────────────
 
 const questionTestMarksSchema = new mongoose.Schema({
@@ -995,6 +1011,206 @@ app.get('/api/groups/:groupId/questions-not-in-category', async (req, res) => {
     }).populate('testCategory', 'name slug');
 
     res.json({ groupId: group.groupId, totalQuestionsInGroup: group.questions.length, questionsNotInCategory: questions.length, questions });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Student Routes ───────────────────────────────────────────────────────────
+ 
+/**
+ * GET /api/students?testCategory=slug
+ * List all students for a test category
+ */
+app.get('/api/students', async (req, res) => {
+  try {
+    const { testCategory } = req.query;
+    const query = {};
+    if (testCategory) {
+      const category = await TestCategory.findOne({ slug: testCategory });
+      if (!category) return res.status(404).json({ error: 'Test category not found' });
+      query.testCategory = category._id;
+    }
+    const students = await Student.find(query)
+      .populate('testCategory', 'name slug')
+      .sort({ createdAt: -1 });
+    res.json(students);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+ 
+/**
+ * POST /api/students
+ * Create a single student and assign to a test category
+ * Body: { rollNo, name, program, phone, testCategory (slug) }
+ */
+app.post('/api/students', async (req, res) => {
+  try {
+    const { rollNo, name, program = "", phone = "", testCategory } = req.body;
+    if (!rollNo || !name) return res.status(400).json({ error: 'rollNo and name are required' });
+ 
+    const categoryIds = [];
+    if (testCategory) {
+      const slugList = Array.isArray(testCategory) ? testCategory : [testCategory].filter(Boolean);
+      for (const slug of slugList) {
+        const cat = await TestCategory.findOne({ slug });
+        if (!cat) return res.status(400).json({ error: `Test category "${slug}" not found` });
+        categoryIds.push(cat._id);
+      }
+    }
+ 
+    // Check for duplicate rollNo in same test category
+    if (categoryIds.length > 0) {
+      const existing = await Student.findOne({ rollNo, testCategory: { $in: categoryIds } });
+      if (existing) return res.status(409).json({ error: `Student with rollNo "${rollNo}" already exists in this test category` });
+    }
+ 
+    const student = new Student({ rollNo, name, program, phone, testCategory: categoryIds });
+    await student.save();
+    const populated = await Student.findById(student._id).populate('testCategory', 'name slug');
+    res.status(201).json(populated);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+ 
+/**
+ * POST /api/students/bulk
+ * Import multiple students (from Excel) into a test category
+ * Body: { students: [{ rollNo, name, program, phone }], testCategory (slug) }
+ * Returns: { inserted, skipped, errors }
+ */
+app.post('/api/students/bulk', async (req, res) => {
+  try {
+    const { students, testCategory } = req.body;
+    if (!students || !Array.isArray(students) || students.length === 0)
+      return res.status(400).json({ error: 'students array is required' });
+    if (!testCategory) return res.status(400).json({ error: 'testCategory is required' });
+ 
+    const category = await TestCategory.findOne({ slug: testCategory });
+    if (!category) return res.status(400).json({ error: 'Test category not found' });
+ 
+    // Get existing rollNos in this category
+    const existingStudents = await Student.find({ testCategory: category._id }).select('rollNo');
+    const existingRollNos = new Set(existingStudents.map(s => s.rollNo));
+ 
+    const toInsert = [], skipped = [], errors = [];
+ 
+    for (const s of students) {
+      if (!s.rollNo || !s.name) { errors.push({ ...s, reason: 'Missing rollNo or name' }); continue; }
+      if (existingRollNos.has(s.rollNo)) { skipped.push(s.rollNo); continue; }
+      toInsert.push({ rollNo: s.rollNo, name: s.name, program: s.program || "", phone: s.phone || "", testCategory: [category._id] });
+    }
+ 
+    let inserted = 0;
+    if (toInsert.length > 0) {
+      const result = await Student.insertMany(toInsert, { ordered: false });
+      inserted = result.length;
+    }
+ 
+    res.status(201).json({ success: true, inserted, skipped: skipped.length, skippedRollNos: skipped, errors, total: students.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+ 
+/**
+ * POST /api/students/copy-from-category
+ * Copy students from one test category to another (add/remove mode)
+ * Body: { fromTestCategory, toTestCategory, rollNos? (optional - if omitted, copy all) }
+ */
+app.post('/api/students/copy-from-category', async (req, res) => {
+  try {
+    const { fromTestCategory, toTestCategory, rollNos } = req.body;
+    if (!fromTestCategory || !toTestCategory) return res.status(400).json({ error: 'fromTestCategory and toTestCategory are required' });
+ 
+    const fromCategory = await TestCategory.findOne({ slug: fromTestCategory });
+    if (!fromCategory) return res.status(404).json({ error: 'Source test category not found' });
+    const toCategory = await TestCategory.findOne({ slug: toTestCategory });
+    if (!toCategory) return res.status(404).json({ error: 'Destination test category not found' });
+ 
+    // Fetch source students
+    const query = { testCategory: fromCategory._id };
+    if (rollNos && Array.isArray(rollNos) && rollNos.length > 0) query.rollNo = { $in: rollNos };
+    const sourceStudents = await Student.find(query);
+ 
+    // Existing rollNos in destination
+    const destStudents = await Student.find({ testCategory: toCategory._id }).select('rollNo');
+    const existingRollNos = new Set(destStudents.map(s => s.rollNo));
+ 
+    const toInsert = [], skipped = [];
+    for (const s of sourceStudents) {
+      if (existingRollNos.has(s.rollNo)) { skipped.push(s.rollNo); continue; }
+      toInsert.push({ rollNo: s.rollNo, name: s.name, program: s.program, phone: s.phone, testCategory: [toCategory._id] });
+    }
+ 
+    let inserted = 0;
+    if (toInsert.length > 0) {
+      const result = await Student.insertMany(toInsert, { ordered: false });
+      inserted = result.length;
+    }
+ 
+    res.json({ success: true, inserted, skipped: skipped.length, skippedRollNos: skipped, totalSource: sourceStudents.length });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+ 
+/**
+ * PUT /api/students/:id
+ * Update a student record
+ */
+app.put('/api/students/:id', async (req, res) => {
+  try {
+    const { rollNo, name, program, phone, testCategory } = req.body;
+    const updateData = { updatedAt: new Date() };
+    if (rollNo !== undefined) updateData.rollNo = rollNo;
+    if (name !== undefined) updateData.name = name;
+    if (program !== undefined) updateData.program = program;
+    if (phone !== undefined) updateData.phone = phone;
+    if (testCategory !== undefined) {
+      const slugList = Array.isArray(testCategory) ? testCategory : [testCategory].filter(Boolean);
+      const categoryIds = [];
+      for (const slug of slugList) {
+        const cat = await TestCategory.findOne({ slug });
+        if (cat) categoryIds.push(cat._id);
+      }
+      updateData.testCategory = categoryIds;
+    }
+    const updated = await Student.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true }).populate('testCategory', 'name slug');
+    if (!updated) return res.status(404).json({ error: 'Student not found' });
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+ 
+/**
+ * DELETE /api/students/:id
+ * Remove a student
+ */
+app.delete('/api/students/:id', async (req, res) => {
+  try {
+    const deleted = await Student.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ error: 'Student not found' });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+ 
+/**
+ * DELETE /api/students/bulk-delete
+ * Remove multiple students by IDs
+ * Body: { ids: [...] }
+ */
+app.post('/api/students/bulk-delete', async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!ids || !Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'ids array is required' });
+    const result = await Student.deleteMany({ _id: { $in: ids } });
+    res.json({ success: true, deleted: result.deletedCount });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
